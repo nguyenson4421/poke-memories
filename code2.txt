@@ -1,0 +1,176 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using System.IO;
+using System.Diagnostics;
+using Microsoft.Office.Interop.Excel;
+
+namespace GetInvoiceInfo
+{
+    public partial class frmMain : Form
+    {
+        public frmMain()
+        {
+            InitializeComponent();
+            txtLink.Text = @"C:\Users\sonmi\Downloads\WFH\File";
+            cbMonth.Text = DateTime.Now.Month.ToString();
+            txtYear.Text = DateTime.Now.Year.ToString();
+        }
+
+        private void btnGetInvoice_Click(object sender, EventArgs e)
+        {
+            string sUrl = txtLink.Text,
+                sMonth = cbMonth.Text,
+                sYear = txtYear.Text;
+            try
+            {
+                //SWS DAI AN => AIR => EZHT3A062 => EZHT3A062.xls
+                if (!string.IsNullOrEmpty(sUrl) && !string.IsNullOrEmpty(sMonth) && !string.IsNullOrEmpty(sYear))
+                {
+                    string[] allFolder = Directory.GetDirectories(sUrl, "*", SearchOption.AllDirectories);
+
+                    //progressBar
+                    progressBar1.Minimum = 0;
+                    progressBar1.Maximum = allFolder.Count();
+                    progressBar1.Value = 0;
+                    progressBar1.Visible = true;
+
+                    List<InvoiceInfo> lstInvocie = new List<InvoiceInfo>();
+
+                    //File cha ngoài cùng
+                    string[] fs1 = Directory.GetDirectories(sUrl);
+                    foreach (string f1 in fs1)
+                    {
+                        //SWS DAI AN
+                        string[] fs2 = Directory.GetDirectories(f1);
+                        foreach (string f2 in fs2)
+                        {
+                            //AIR
+                            string[] fs3 = Directory.GetDirectories(f2);
+                            foreach (string f3 in fs3)
+                            {
+                                //EZHT3A062
+                                //tìm file excel cùng tên với folder
+                                string fileName = Path.GetFileName(f3);
+
+                                //TH tên folder có dấu phẩy (EZHT3A062,EZHT3A063) thì tìm cả 2 file
+                                string[] lstFileName = fileName.Split(',');
+                                if (lstFileName.Count() > 0)
+                                {
+                                    foreach (string excelFileName in lstFileName)
+                                    {
+                                        //tìm file excel cùng tên với folder
+                                        string[] excelFiles = Directory.GetFiles(f3)
+                                                             .Select(path => Path.GetFileName(path))
+                                                             .Where(x => (x.EndsWith(".xlsx") || x.EndsWith(".xls"))
+                                                                         && (x.StartsWith(excelFileName) && x.StartsWith(excelFileName + ".xls"))//tránh file có tên: EZHT3S006.EZTV3S006_105285083960 E11 TT N1.xls
+                                                                         && (!x.StartsWith("~")))
+                                                             .ToArray();
+
+                                        if (excelFiles.Count() > 0)
+                                        {
+                                            string fullPathName = f3 + "//" + excelFiles[0];
+                                            DateTime modification = File.GetLastWriteTime(fullPathName);
+                                            //Chỉ đọc file có modifi date là month/year input
+                                            if (modification.Month == Int32.Parse(sMonth.Trim()) && modification.Year == Int32.Parse(sYear.Trim()))
+                                            {
+                                                //đọc file
+                                                Microsoft.Office.Interop.Excel.Application excel = new Microsoft.Office.Interop.Excel.Application();
+                                                Workbook wb;
+                                                Worksheet ws;
+
+                                                wb = excel.Workbooks.Open(fullPathName);
+                                                ws = wb.Worksheets[1];
+
+                                                lstInvocie.Add(new InvoiceInfo
+                                                {
+                                                    InvoiceNo = ws.Range["BH12"].Value != null ? ws.Range["BH12"].Value.ToString() : string.Empty,
+                                                    InvoiceDate = ws.Range["BQ8"].Value != null ? ws.Range["BQ8"].Value.ToString() : string.Empty,
+                                                    Qty = ws.Range["AW35"].Value != null ? ws.Range["AW35"].Value.ToString() : string.Empty,
+                                                    Amount = ws.Range["BR35"].Value != null ? ws.Range["BR35"].Value.ToString() : string.Empty,
+                                                    Terms = ws.Range["CK30"].Value != null ? ws.Range["CK30"].Value.ToString() : string.Empty
+                                                });
+
+                                                progressBar1.Value += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    progressBar1.Value = allFolder.Count();
+
+                    //Export
+                    if (lstInvocie.Count() > 0)
+                    {
+                        string templatefilename = Directory.GetCurrentDirectory() + "/Temp/Tong_hop.xlsx";
+                        Microsoft.Office.Interop.Excel.Application excel = new Microsoft.Office.Interop.Excel.Application();
+                        Workbook wbE = excel.Workbooks.Add(templatefilename);
+
+                        string filename = Directory.GetCurrentDirectory() + "/Export/Tong_hop.xlsx";
+                        if (File.Exists(filename))
+                            File.Delete(filename);
+
+                        Worksheet wsE = wbE.Worksheets[1];
+                        int row = 2;// dòng bắt đầu ghi dữ liệu
+                        foreach (var item in lstInvocie)
+                        {
+                            wsE.Range[string.Format("B{0}", row)].Value = "SWS-MATERIAL";
+                            wsE.Range[string.Format("C{0}", row)].Value = "O";
+                            wsE.Range[string.Format("D{0}", row)].Value = item.InvoiceNo;
+                            wsE.Range[string.Format("F{0}", row)].Value = (!string.IsNullOrEmpty(item.InvoiceDate) && item.InvoiceDate != null) ? ConvertStringToDate(item.InvoiceDate) : string.Empty;
+                            wsE.Range[string.Format("G{0}", row)].Value = item.Qty;
+                            wsE.Range[string.Format("H{0}", row)].Value = item.Amount;
+                            wsE.Range[string.Format("I{0}", row)].Value = item.Terms;
+                            row++;
+                        }
+
+                        wbE.SaveAs(filename);
+                        //excel.Quit();
+                        MessageBox.Show("Xong rồi!" + Environment.NewLine + "Có " + lstInvocie.Count() + " invoice.");
+                        excel.Visible = true;
+                    }
+                    else
+                    {
+                        MessageBox.Show("Không tìm thấy invoice nào phù hợp!");
+                    }
+                }
+                else
+                {
+                    MessageBox.Show("Hãy nhập đủ thông tin!");
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message);
+            }
+        }
+
+        private string ConvertStringToDate(string strDate)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(strDate) && strDate != null && strDate != "0")
+                {
+                    DateTime myDate;
+                    if (DateTime.TryParse(strDate, out myDate))
+                    {
+                        return myDate.ToString("dd/MM/yyyy");
+                    }
+                }
+                return strDate;
+            }
+            catch
+            {
+                return strDate;
+            }
+        }
+    }
+}
